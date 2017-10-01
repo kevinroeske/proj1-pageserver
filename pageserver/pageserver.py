@@ -19,7 +19,8 @@ logging.basicConfig(format='%(levelname)s:%(message)s',
                     level=logging.INFO)
 log = logging.getLogger(__name__)
 # Logging level may be overridden by configuration 
-
+import os
+import config
 import socket    # Basic TCP/IP communication on the internet
 import _thread   # Response computation runs concurrently with main program
 
@@ -77,7 +78,6 @@ STATUS_FORBIDDEN = "HTTP/1.0 403 Forbidden\n\n"
 STATUS_NOT_FOUND = "HTTP/1.0 404 Not Found\n\n"
 STATUS_NOT_IMPLEMENTED = "HTTP/1.0 401 Not Implemented\n\n"
 
-
 def respond(sock):
     """
     This server responds only to GET requests (not PUT, POST, or UPDATE).
@@ -88,15 +88,28 @@ def respond(sock):
     request = str(request, encoding='utf-8', errors='strict')
     log.info("--- Received request ----")
     log.info("Request was {}\n***\n".format(request))
-
     parts = request.split()
     if len(parts) > 1 and parts[0] == "GET":
         transmit(STATUS_OK, sock)
-        transmit(CAT, sock)
-    else:
+        url = parts[1][1:]  #fixes absolute path problem by dropping the /
+        if url.startswith('..') or '~' in url or '//' in url or (url.endswith('.css')==0 and url.endswith('.html')==0):
+            log.info(STATUS_FORBIDDEN)
+            transmit(STATUS_FORBIDDEN, sock)
+            transmit("\nAccess not allowed: {}\n".format(request), sock)
+            sock.shutdown(socket.SHUT_RDWR)
+            sock.close()
+            return
+        docpath = os.path.join(DOCROOT, url)
+        log.info("Initial check of path: " + DOCROOT)
+        log.info("The path is " + docpath)
+    try:
+        with open(docpath, 'r', encoding='utf-8') as file:
+            for line in file:
+                transmit(line.strip(), sock)
+    except OSError as error:
         log.info("Unhandled request: {}".format(request))
-        transmit(STATUS_NOT_IMPLEMENTED, sock)
-        transmit("\nI don't handle this request: {}\n".format(request), sock)
+        transmit(STATUS_NOT_FOUND, sock)
+        transmit("\n\nUnable to locate page: {}\n".format(request), sock)
 
     sock.shutdown(socket.SHUT_RDWR)
     sock.close()
@@ -136,7 +149,10 @@ def get_options():
 
 
 def main():
+    global DOCROOT
     options = get_options()
+    DOCROOT = options.DOCROOT
+    log.info("DOCROOT is " + DOCROOT)
     port = options.PORT
     if options.DEBUG:
         log.setLevel(logging.DEBUG)
